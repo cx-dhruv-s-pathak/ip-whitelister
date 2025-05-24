@@ -7,7 +7,7 @@ const region = "ind";
 const authBase = `https://${region}.iam.checkmarx.net/auth/realms/${tenant}`;
 const iamBase = `https://${region}.iam.checkmarx.net/auth/admin/realms/${tenant}`;
 const auditEndpoint = `https://${region}.ast.checkmarx.net/api/audit/`;
-const whitelist = ["27.107.51.59"];
+const whitelist = ["27.107.51.58", "103.149.126.38"];
 
 let tokenCache = {
   token: null,
@@ -30,7 +30,7 @@ async function getToken(force = false) {
       new URLSearchParams({
         grant_type: "client_credentials",
         client_id: "whitelist_api",
-        client_secret: "<client-secret-here>",
+        client_secret: "<>",
       }),
       {
         headers: {
