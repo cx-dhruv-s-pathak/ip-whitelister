@@ -1,6 +1,7 @@
 const axios = require("axios");
+const cron = require("node-cron");
 
-//global-configurations
+// Global Config
 const tenant = "sudha";
 const region = "ind";
 const authBase = `https://${region}.iam.checkmarx.net/auth/realms/${tenant}`;
@@ -13,18 +14,23 @@ let tokenCache = {
   timestamp: null,
 };
 
-async function getToken() {
-  const now = Date.now();
-  const isExpired = !tokenCache.token || (now - tokenCache.timestamp) > (29 * 60 * 1000); // 29 minutes
+// Token Refresh - Every 29 minutes
+cron.schedule("*/29 * * * *", async () => {
+  await getToken(true); // force refresh
+});
 
-  if (isExpired) {
+async function getToken(force = false) {
+  const now = Date.now();
+  const isExpired = !tokenCache.token || (now - tokenCache.timestamp) > (29 * 60 * 1000);
+
+  if (isExpired || force) {
     console.log("Fetching new token...");
     const response = await axios.post(
       `${authBase}/protocol/openid-connect/token`,
       new URLSearchParams({
         grant_type: "client_credentials",
         client_id: "whitelist_api",
-        client_secret: "52rZVqL5euCHfsZ3fM8W4HlBXWkDg0Un",
+        client_secret: "<client-secret-here>",
       }),
       {
         headers: {
@@ -33,11 +39,8 @@ async function getToken() {
         },
       }
     );
-
     tokenCache.token = response.data.access_token;
     tokenCache.timestamp = now;
-  } else {
-    console.log("Using cached token");
   }
 
   return tokenCache.token;
@@ -69,14 +72,11 @@ async function fetchAuditTrail(token) {
 
 async function implementWhitelist(ipidMap) {
   const toBeBlocked = {};
-
   for (const [ip, userIds] of Object.entries(ipidMap)) {
     if (!whitelist.includes(ip)) {
       toBeBlocked[ip] = [...userIds];
     }
   }
-
-  console.log("To Be Blocked:", toBeBlocked);
   return toBeBlocked;
 }
 
@@ -102,7 +102,7 @@ async function sessionInvalidator(userId, token) {
       });
     }
   } catch (err) {
-    console.error("Session invalidation failed:", err.response?.data || err.message);
+    console.error(`Session invalidation failed for ${userId}:`, err.response?.data || err.message);
   }
 }
 
@@ -112,28 +112,30 @@ async function kickOut(toBeBlocked, token) {
       await sessionInvalidator(userId, token);
     }
   }
-
-  // TODO: await updateRoll(userIds, token);
 }
 
-async function main() {
-  const token = await getToken();
-  const ipidMap = await fetchAuditTrail(token);
-  const toBeBlocked = await implementWhitelist(ipidMap);
-  if (Object.keys(toBeBlocked).length > 0) {
-    await kickOut(toBeBlocked, token);
+// Audit + Kickout - Every 30 seconds
+cron.schedule("*/30 * * * * *", async () => {
+  try {
+    const token = await getToken(); // cached if fresh
+    const ipidMap = await fetchAuditTrail(token);
+    const toBeBlocked = await implementWhitelist(ipidMap);
+    if (Object.keys(toBeBlocked).length > 0) {
+      await kickOut(toBeBlocked, token);
+    } else {
+      console.log("Nothing to block at this cycle.");
+    }
+  } catch (err) {
+    console.error("Cycle failed:", err.message);
   }
-}
+});
 
-main();
+// Run immediately on start
+(async () => {
+  await getToken(true);
+})();
 
-
-// Optional: Run continuously as a cron job
-// setInterval(() => {
-//   main().catch(console.error);
-// }, 20_000); // Every 20 seconds
-
-//flow:
+//logic:
 //continously monitor the audit-log and create a hash-map of (ip, id) key-value pair
 //if an IP is not in allowlist, then call the kickout function and pass the actionUserId from hash-map in it
 //kickout function internally calls 2 functions
@@ -141,9 +143,6 @@ main();
 //updateRoll(): reverse the current role-set
 //when the user logs in again from a whitelisted ip, then call the updateRole() again.
 
-
-//to-do
-//implement token resue and refresh 
+//to-do:
 //add the updateRole() function at needed places. 
 //set up ec2 instance
-//use node or cron? or will ec2 alone handle this?
