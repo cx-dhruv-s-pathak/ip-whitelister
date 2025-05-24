@@ -30,7 +30,7 @@ async function getToken(force = false) {
       new URLSearchParams({
         grant_type: "client_credentials",
         client_id: "whitelist_api",
-        client_secret: "<>",
+        client_secret: "52rZVqL5euCHfsZ3fM8W4HlBXWkDg0Un",
       }),
       {
         headers: {
