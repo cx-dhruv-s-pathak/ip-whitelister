@@ -1,0 +1,149 @@
+const axios = require("axios");
+
+//global-configurations
+const tenant = "sudha";
+const region = "ind";
+const authBase = `https://${region}.iam.checkmarx.net/auth/realms/${tenant}`;
+const iamBase = `https://${region}.iam.checkmarx.net/auth/admin/realms/${tenant}`;
+const auditEndpoint = `https://${region}.ast.checkmarx.net/api/audit/`;
+const whitelist = ["27.107.51.59"];
+
+let tokenCache = {
+  token: null,
+  timestamp: null,
+};
+
+async function getToken() {
+  const now = Date.now();
+  const isExpired = !tokenCache.token || (now - tokenCache.timestamp) > (29 * 60 * 1000); // 29 minutes
+
+  if (isExpired) {
+    console.log("Fetching new token...");
+    const response = await axios.post(
+      `${authBase}/protocol/openid-connect/token`,
+      new URLSearchParams({
+        grant_type: "client_credentials",
+        client_id: "whitelist_api",
+        client_secret: "52rZVqL5euCHfsZ3fM8W4HlBXWkDg0Un",
+      }),
+      {
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
+        },
+      }
+    );
+
+    tokenCache.token = response.data.access_token;
+    tokenCache.timestamp = now;
+  } else {
+    console.log("Using cached token");
+  }
+
+  return tokenCache.token;
+}
+
+async function fetchAuditTrail(token) {
+  try {
+    const response = await axios.get(auditEndpoint, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "*/*; version=1.0",
+      },
+    });
+
+    const ipidMap = {};
+    response.data?.events?.forEach((event) => {
+      if (event.ipAddress && event.actionUserId) {
+        if (!ipidMap[event.ipAddress]) ipidMap[event.ipAddress] = new Set();
+        ipidMap[event.ipAddress].add(event.actionUserId);
+      }
+    });
+
+    return ipidMap;
+  } catch (err) {
+    console.error("Fetching audit trail failed:", err.response?.data || err.message);
+    throw err;
+  }
+}
+
+async function implementWhitelist(ipidMap) {
+  const toBeBlocked = {};
+
+  for (const [ip, userIds] of Object.entries(ipidMap)) {
+    if (!whitelist.includes(ip)) {
+      toBeBlocked[ip] = [...userIds];
+    }
+  }
+
+  console.log("To Be Blocked:", toBeBlocked);
+  return toBeBlocked;
+}
+
+async function sessionInvalidator(userId, token) {
+  try {
+    const getSessionsEndpoint = `${iamBase}/users/${userId}/sessions`;
+    const response = await axios.get(getSessionsEndpoint, {
+      headers: {
+        Accept: "*/*",
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    const sessions = response.data;
+    for (const session of sessions) {
+      const sessionId = session.id;
+      const deleteEndpoint = `${iamBase}/sessions/${sessionId}`;
+      await axios.delete(deleteEndpoint, {
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+      });
+    }
+  } catch (err) {
+    console.error("Session invalidation failed:", err.response?.data || err.message);
+  }
+}
+
+async function kickOut(toBeBlocked, token) {
+  for (const userIds of Object.values(toBeBlocked)) {
+    for (const userId of userIds) {
+      await sessionInvalidator(userId, token);
+    }
+  }
+
+  // TODO: await updateRoll(userIds, token);
+}
+
+async function main() {
+  const token = await getToken();
+  const ipidMap = await fetchAuditTrail(token);
+  const toBeBlocked = await implementWhitelist(ipidMap);
+  if (Object.keys(toBeBlocked).length > 0) {
+    await kickOut(toBeBlocked, token);
+  }
+}
+
+main();
+
+
+// Optional: Run continuously as a cron job
+// setInterval(() => {
+//   main().catch(console.error);
+// }, 20_000); // Every 20 seconds
+
+//flow:
+//continously monitor the audit-log and create a hash-map of (ip, id) key-value pair
+//if an IP is not in allowlist, then call the kickout function and pass the actionUserId from hash-map in it
+//kickout function internally calls 2 functions
+//sessionInvalidator(): DELETE all the sessions initiated by the actionUserId
+//updateRoll(): reverse the current role-set
+//when the user logs in again from a whitelisted ip, then call the updateRole() again.
+
+
+//to-do
+//implement token resue and refresh 
+//add the updateRole() function at needed places. 
+//set up ec2 instance
+//use node or cron? or will ec2 alone handle this?
