@@ -8,6 +8,7 @@ const authBase = `https://${region}.iam.checkmarx.net/auth/realms/${tenant}`;
 const iamBase = `https://${region}.iam.checkmarx.net/auth/admin/realms/${tenant}`;
 const auditEndpoint = `https://${region}.ast.checkmarx.net/api/audit/`;
 const whitelist = ["27.107.51.58", "103.149.126.38"];
+let lastProcessedDate = null;
 
 let tokenCache = {
   token: null,
@@ -21,7 +22,8 @@ cron.schedule("*/29 * * * *", async () => {
 
 async function getToken(force = false) {
   const now = Date.now();
-  const isExpired = !tokenCache.token || (now - tokenCache.timestamp) > (29 * 60 * 1000);
+  const isExpired =
+    !tokenCache.token || now - tokenCache.timestamp > 29 * 60 * 1000;
 
   if (isExpired || force) {
     console.log("Fetching new token...");
@@ -56,16 +58,39 @@ async function fetchAuditTrail(token) {
     });
 
     const ipidMap = {};
+    let maxTimestamp = lastProcessedDate;
+
     response.data?.events?.forEach((event) => {
+      const eventTimestamp = new Date(event.eventDate);
+
+      // Skip already processed events
+      if (lastProcessedDate && eventTimestamp <= lastProcessedDate) return;
+
+      // Track the max timestamp in this batch
+      if (!maxTimestamp || eventTimestamp > maxTimestamp) {
+        maxTimestamp = eventTimestamp;
+      }
+
+      // Process new event
       if (event.ipAddress && event.actionUserId) {
         if (!ipidMap[event.ipAddress]) ipidMap[event.ipAddress] = new Set();
         ipidMap[event.ipAddress].add(event.actionUserId);
       }
     });
 
+    // Update the lastProcessedDate for the next cycle
+    lastProcessedDate = maxTimestamp;
+
+    console.log("New Events:", ipidMap);
+    console.log("Last processed at:", lastProcessedDate);
+    console.log("Latest event processed:", maxTimestamp);
+
     return ipidMap;
   } catch (err) {
-    console.error("Fetching audit trail failed:", err.response?.data || err.message);
+    console.error(
+      "Fetching audit trail failed:",
+      err.response?.data || err.message
+    );
     throw err;
   }
 }
@@ -102,29 +127,24 @@ async function sessionInvalidator(userId, token) {
       });
     }
   } catch (err) {
-    console.error(`Session invalidation failed for ${userId}:`, err.response?.data || err.message);
+    console.error(
+      `Session invalidation failed for ${userId}:`,
+      err.response?.data || err.message
+    );
   }
 }
-
-// async function kickOut(toBeBlocked, token) {
-//   for (const userIds of Object.values(toBeBlocked)) {
-//     for (const userId of userIds) {
-//       await sessionInvalidator(userId, token);
-//     }
-//   }
-// }
 
 async function kickOut(toBeBlocked, token, ipidMap) {
   for (const userIds of Object.values(toBeBlocked)) {
     for (const userId of userIds) {
       await sessionInvalidator(userId, token);
-      
+
       // After kicking out, remove userId from all ip entries in ipidMap
       for (const ip in ipidMap) {
         if (ipidMap[ip].has(userId)) {
           ipidMap[ip].delete(userId);
           if (ipidMap[ip].size === 0) {
-            delete ipidMap[ip]; // Clean up empty sets
+            delete ipidMap[ip];
           }
         }
       }
@@ -135,12 +155,11 @@ async function kickOut(toBeBlocked, token, ipidMap) {
 // Audit + Kickout - Every 30 seconds
 cron.schedule("*/30 * * * * *", async () => {
   try {
-    const token = await getToken(); // cached if fresh
+    const token = await getToken();
     const ipidMap = await fetchAuditTrail(token);
     const toBeBlocked = await implementWhitelist(ipidMap);
     if (Object.keys(toBeBlocked).length > 0) {
       await kickOut(toBeBlocked, token, ipidMap);
-
     } else {
       console.log("Nothing to block at this cycle.");
     }
@@ -163,4 +182,4 @@ cron.schedule("*/30 * * * * *", async () => {
 //when the user logs in again from a whitelisted ip, then call the updateRole() again.
 
 //to-do:
-//add the updateRole() function at needed places. 
+//add the updateRole() function at needed places.
