@@ -106,10 +106,28 @@ async function sessionInvalidator(userId, token) {
   }
 }
 
-async function kickOut(toBeBlocked, token) {
+// async function kickOut(toBeBlocked, token) {
+//   for (const userIds of Object.values(toBeBlocked)) {
+//     for (const userId of userIds) {
+//       await sessionInvalidator(userId, token);
+//     }
+//   }
+// }
+
+async function kickOut(toBeBlocked, token, ipidMap) {
   for (const userIds of Object.values(toBeBlocked)) {
     for (const userId of userIds) {
       await sessionInvalidator(userId, token);
+      
+      // After kicking out, remove userId from all ip entries in ipidMap
+      for (const ip in ipidMap) {
+        if (ipidMap[ip].has(userId)) {
+          ipidMap[ip].delete(userId);
+          if (ipidMap[ip].size === 0) {
+            delete ipidMap[ip]; // Clean up empty sets
+          }
+        }
+      }
     }
   }
 }
@@ -121,7 +139,8 @@ cron.schedule("*/30 * * * * *", async () => {
     const ipidMap = await fetchAuditTrail(token);
     const toBeBlocked = await implementWhitelist(ipidMap);
     if (Object.keys(toBeBlocked).length > 0) {
-      await kickOut(toBeBlocked, token);
+      await kickOut(toBeBlocked, token, ipidMap);
+
     } else {
       console.log("Nothing to block at this cycle.");
     }
@@ -145,4 +164,3 @@ cron.schedule("*/30 * * * * *", async () => {
 
 //to-do:
 //add the updateRole() function at needed places. 
-//set up ec2 instance

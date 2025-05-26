@@ -1,6 +1,5 @@
 # Use Node.js LTS as base image
-FROM node:24-slim
-
+FROM node:24.0.2-alpine
 # Set working directory
 WORKDIR /app
 
