@@ -152,8 +152,8 @@ async function kickOut(toBeBlocked, token, ipidMap) {
   }
 }
 
-// Audit + Kickout - Every 30 seconds
-cron.schedule("*/30 * * * * *", async () => {
+// Audit + Kickout - Every 10 seconds
+cron.schedule("*/10 * * * * *", async () => {
   try {
     const token = await getToken();
     const ipidMap = await fetchAuditTrail(token);
