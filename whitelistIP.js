@@ -1,5 +1,6 @@
 const axios = require("axios");
 const cron = require("node-cron");
+require('dotenv').config();
 
 // Global Config
 const tenant = "sudha";
@@ -9,6 +10,8 @@ const iamBase = `https://${region}.iam.checkmarx.net/auth/admin/realms/${tenant}
 const auditEndpoint = `https://${region}.ast.checkmarx.net/api/audit/`;
 const whitelist = ["27.107.51.58", "103.149.126.38", "44.218.110.68","94.205.42.224"];
 let lastProcessedDate = null;
+let client_id= process.env.CLIENT_ID
+let client_secret= process.env.CLIENT_SECRET
 
 let tokenCache = {
   token: null,
@@ -31,8 +34,8 @@ async function getToken(force = false) {
       `${authBase}/protocol/openid-connect/token`,
       new URLSearchParams({
         grant_type: "client_credentials",
-        client_id: "whitelist_api",
-        client_secret: "52rZVqL5euCHfsZ3fM8W4HlBXWkDg0Un",
+        client_id: client_id,
+        client_secret: client_secret,
       }),
       {
         headers: {
