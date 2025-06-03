@@ -7,7 +7,7 @@ const region = "ind";
 const authBase = `https://${region}.iam.checkmarx.net/auth/realms/${tenant}`;
 const iamBase = `https://${region}.iam.checkmarx.net/auth/admin/realms/${tenant}`;
 const auditEndpoint = `https://${region}.ast.checkmarx.net/api/audit/`;
-const whitelist = ["27.107.51.58", "103.149.126.38", "44.218.110.68"];
+const whitelist = ["27.107.51.58", "103.149.126.38", "44.218.110.68","94.205.42.224"];
 let lastProcessedDate = null;
 
 let tokenCache = {
